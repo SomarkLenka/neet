@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEET Question Viewer</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+</head>
+<body>
+<div id="layout">
+  <nav id="sidebar">
+    <h1>NEET Questions</h1>
+    <div id="mode-toggle">
+      <button id="mode-category" class="active">By subject</button>
+      <button id="mode-paper">By paper</button>
+    </div>
+    <div id="category-tabs"></div>
+    <select id="paper-select"></select>
+    <div id="question-grid"></div>
+    <div id="nav-status"></div>
+  </nav>
+  <main id="content">
+    <div id="question-header"></div>
+    <div id="question-image-wrap"><img id="question-image" alt="question"></div>
+    <details id="question-text-wrap"><summary>Extracted text <span id="text-source"></span></summary>
+      <pre id="question-text"></pre>
+    </details>
+    <div id="placeholder">Select a question to view it.</div>
+  </main>
+  <aside id="chat-panel">
+    <div id="chat-header">
+      <span>AI Assistant</span>
+      <span>
+        <button id="chat-stop" title="Stop response" disabled>&#9632;</button>
+        <button id="chat-reset" title="Reset this chat">&#10227;</button>
+      </span>
+    </div>
+    <div id="chat-messages"></div>
+    <form id="chat-form">
+      <textarea id="chat-input" rows="2" placeholder="Ask about this question... (Enter to send, Shift+Enter for newline)"></textarea>
+      <button id="chat-send" type="submit">Send</button>
+    </form>
+  </aside>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

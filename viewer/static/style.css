@@ -1,0 +1,60 @@
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, "Segoe UI", sans-serif; color: #1c2733; background: #f3f5f8; }
+#layout { display: grid; grid-template-columns: 270px 1fr 380px; height: 100vh; overflow: hidden; }
+#layout > * { min-height: 0; min-width: 0; }
+
+/* sidebar */
+#sidebar { background: #16212e; color: #dbe4ee; padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+#sidebar h1 { font-size: 17px; margin: 0 0 4px; color: #fff; }
+#mode-toggle { display: flex; gap: 6px; }
+#mode-toggle button { flex: 1; padding: 6px; border: 1px solid #3b4d63; background: transparent; color: #dbe4ee; border-radius: 6px; cursor: pointer; }
+#mode-toggle button.active { background: #2e6fdb; border-color: #2e6fdb; color: #fff; }
+#category-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+#category-tabs button { padding: 5px 10px; border: 1px solid #3b4d63; background: transparent; color: #dbe4ee; border-radius: 14px; cursor: pointer; text-transform: capitalize; }
+#category-tabs button.active { background: #1f8a5c; border-color: #1f8a5c; color: #fff; }
+#paper-select { padding: 6px; border-radius: 6px; border: 1px solid #3b4d63; background: #0f1822; color: #dbe4ee; max-width: 100%; }
+#question-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 5px; }
+#question-grid button { padding: 6px 2px; border: 1px solid #3b4d63; background: transparent; color: #dbe4ee; border-radius: 5px; cursor: pointer; font-size: 12px; }
+#question-grid button:hover { background: #243447; }
+#question-grid button.active { background: #2e6fdb; border-color: #2e6fdb; color: #fff; }
+#question-grid button.has-chat { border-color: #1f8a5c; }
+#question-grid button:disabled { opacity: 0.25; cursor: default; }
+#nav-status { font-size: 12px; color: #8da3bb; }
+
+/* content */
+#content { padding: 18px; overflow-y: auto; }
+#question-header { font-weight: 600; margin-bottom: 10px; color: #41546b; }
+#question-image-wrap { background: #fff; border: 1px solid #d6dee8; border-radius: 8px; padding: 10px; display: none; }
+#question-image { max-width: 100%; cursor: zoom-in; }
+#question-image.zoomed { max-width: none; cursor: zoom-out; }
+#question-text-wrap { margin-top: 12px; display: none; }
+#question-text-wrap summary { cursor: pointer; color: #41546b; }
+#text-source { font-size: 11px; color: #8da3bb; }
+#question-text { white-space: pre-wrap; background: #fff; border: 1px solid #d6dee8; border-radius: 8px; padding: 10px; }
+#placeholder { color: #8da3bb; margin-top: 40px; text-align: center; }
+
+/* chat */
+#chat-panel { background: #fff; border-left: 1px solid #d6dee8; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+#chat-messages { min-height: 0; }
+#chat-header { padding: 10px 14px; border-bottom: 1px solid #d6dee8; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+#chat-header button { border: 1px solid #d6dee8; background: #fff; border-radius: 5px; cursor: pointer; padding: 2px 8px; }
+#chat-header button:disabled { opacity: 0.4; cursor: default; }
+#chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 92%; padding: 8px 11px; border-radius: 10px; overflow-wrap: break-word; }
+.msg.user { align-self: flex-end; background: #2e6fdb; color: #fff; }
+.msg.assistant { align-self: flex-start; background: #eef2f7; }
+.msg.status { align-self: center; background: none; color: #8da3bb; font-size: 12px; padding: 0; }
+.msg.error { align-self: center; background: #fdecec; color: #b02a2a; font-size: 13px; }
+.msg pre { background: #1c2733; color: #e8eef5; padding: 8px; border-radius: 6px; overflow-x: auto; }
+.msg code { background: rgba(0,0,0,0.08); padding: 0 3px; border-radius: 3px; }
+.msg pre code { background: none; padding: 0; }
+#chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #d6dee8; }
+#chat-input { flex: 1; resize: none; border: 1px solid #d6dee8; border-radius: 8px; padding: 8px; font: inherit; }
+#chat-send { border: none; background: #2e6fdb; color: #fff; border-radius: 8px; padding: 0 16px; cursor: pointer; }
+#chat-send:disabled { opacity: 0.5; cursor: default; }
+/* let KaTeX wrap inside the narrow chat bubbles instead of overflowing */
+.msg .katex { white-space: normal; }
+.msg .katex-display { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
+.msg .katex-display > .katex { white-space: nowrap; }
+.cursor::after { content: "▋"; animation: blink 1s step-start infinite; }
+@keyframes blink { 50% { opacity: 0; } }

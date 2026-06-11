@@ -1,0 +1,10 @@
+# source PDFs (large, not redistributable)
+papers/
+
+# pipeline output and runtime data
+extracted/
+data/
+
+__pycache__/
+*.pyc
+*.log
