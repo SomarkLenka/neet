@@ -52,6 +52,28 @@ def is_content_page(page: fitz.Page, gray: np.ndarray) -> tuple[bool, str]:
     return True, ""
 
 
+def find_section_breaks(gray: np.ndarray, divider: int) -> list[int]:
+    """y positions where content crosses the column divider — centered section
+    headers (PHYSICS / CHEMISTRY / BOTANY...) that split a page into bands.
+    Reading order restarts left->right below each such band."""
+    h, w = gray.shape
+    x0, x1 = max(0, divider - 150), min(w, divider + 150)
+    # strict darkness + width: section headers are broad solid-black bands at
+    # the divider; watermarks are grey and divider rules are only a few px wide
+    window = gray[:, x0:x1] < 100
+    width = window.sum(axis=1)
+    crossing = width > 120
+    breaks, start = [], None
+    for y in range(int(h * 0.05), int(h * 0.95)):
+        if crossing[y] and start is None:
+            start = y
+        elif not crossing[y] and start is not None:
+            if 10 <= y - start <= 250:
+                breaks.append((start + y) // 2)
+            start = None
+    return breaks
+
+
 def split_columns(pno: int, page: fitz.Page, gray: np.ndarray) -> PageRender:
     """Split a rendered page at its column divider (the user-specified
     split-first flow: all question detection runs on these halves)."""

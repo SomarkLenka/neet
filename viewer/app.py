@@ -14,28 +14,33 @@ STATIC = Path(__file__).resolve().parent / "static"
 
 app = Flask(__name__, static_folder=str(STATIC), static_url_path="/static")
 
-_index_cache = {"data": None}
+_index_cache = {"data": None, "mtime": None}
 _index_lock = threading.Lock()
-_manifest_cache: dict[str, dict] = {}
+_manifest_cache: dict[str, tuple[float, dict]] = {}
 
 
 def load_index(reload=False):
+    """Cached by file mtime, so papers appear as the (still running)
+    pipeline batch finishes them."""
     with _index_lock:
-        if _index_cache["data"] is None or reload:
-            p = EXTRACTED / "index.json"
+        p = EXTRACTED / "index.json"
+        mtime = p.stat().st_mtime if p.exists() else None
+        if mtime != _index_cache["mtime"] or reload:
             _index_cache["data"] = json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
-            if reload:
-                _manifest_cache.clear()
+            _index_cache["mtime"] = mtime
+            _manifest_cache.clear()
         return _index_cache["data"]
 
 
 def load_manifest(slug: str) -> dict:
-    if slug not in _manifest_cache:
-        p = EXTRACTED / slug / "manifest.json"
-        if not p.exists():
-            abort(404, "unknown paper")
-        _manifest_cache[slug] = json.loads(p.read_text(encoding="utf-8"))
-    return _manifest_cache[slug]
+    p = EXTRACTED / slug / "manifest.json"
+    if not p.exists():
+        abort(404, "unknown paper")
+    mtime = p.stat().st_mtime
+    cached = _manifest_cache.get(slug)
+    if cached is None or cached[0] != mtime:
+        _manifest_cache[slug] = (mtime, json.loads(p.read_text(encoding="utf-8")))
+    return _manifest_cache[slug][1]
 
 
 def get_question(slug: str, num: int) -> dict:

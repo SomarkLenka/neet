@@ -89,9 +89,13 @@ def find_question_blobs(col: np.ndarray) -> tuple[list[Blob], tuple[int, int]]:
         b.ink = int(strip[b.y0:b.y1].sum())
         if b.ink < config.BLOB_MIN_INK:
             continue
-        xs = np.nonzero(strip[b.y0:b.y1].any(axis=0))[0]
-        if xs[-1] - xs[0] > 0.85 * (gx1 - gx0):
-            continue  # ink spans the whole gutter: a rule/header line, not a number
+        xproj = strip[b.y0:b.y1].any(axis=0)
+        xs = np.nonzero(xproj)[0]
+        # a rule/header line is one CONTIGUOUS ink run across the gutter; a
+        # digit sharing rows with a distant watermark is separate clusters
+        runs = np.split(xs, np.nonzero(np.diff(xs) > 1)[0] + 1)
+        if max(len(r) for r in runs) > 0.7 * (gx1 - gx0):
+            continue
         b.x_ink = gx0 + int(xs[0])
         m = 10
         b.crop = col[max(0, b.y0 - m): b.y1 + m, max(0, gx0 - m): gx1 + m].copy()

@@ -33,6 +33,7 @@ class Placed:
     x_offset: int
     col_width: int
     blob: detect.Blob
+    band: int = 0   # section band on the page (reading order restarts per band)
 
 
 def write_json(path, obj) -> None:
@@ -54,10 +55,13 @@ def detect_paper(doc, debug_dir, warnings):
             skipped.append({"page": pno + 1, "reason": reason})
             continue
         pr = pdf_pages.split_columns(pno, page, gray)
+        breaks = pdf_pages.find_section_breaks(gray, pr.divider_px)
         vals: dict[str, set] = {}
         overlays = []
         for col in pr.columns:
             blobs, gutter = detect.find_question_blobs(col.arr)
+            # drop marks on a section-header row, e.g. the BIOLOGY box edge
+            blobs = [b for b in blobs if not any(b.y0 - 40 <= y <= b.y1 + 40 for y in breaks)]
             anchors = numbering.text_anchors(page, col.x_offset_px, gutter)
             blobs = numbering.attach_anchors(blobs, anchors)
             # tesseract runs as one subprocess per blob: parallelize across threads
@@ -71,7 +75,8 @@ def detect_paper(doc, debug_dir, warnings):
                 elif kind == "bare" and b.ocr_value is None:
                     b.ocr_value = val
             vals[col.side] = {b.text_value or b.ocr_value for b in blobs} - {None}
-            placed += [Placed(pno, col.side, col.x_offset_px, col.arr.shape[1], b) for b in blobs]
+            placed += [Placed(pno, col.side, col.x_offset_px, col.arr.shape[1], b,
+                              band=sum(1 for y in breaks if b.y0 > y)) for b in blobs]
             overlays.append((col, gutter, blobs))
         page_vals.append(vals)
         if debug_dir:
@@ -180,7 +185,7 @@ def process_paper(pdf_path, out_root, debug=False):
         placed = [p for p in placed if p.side == "right"]
     placed = prefilter_marks(placed, warnings)
 
-    placed.sort(key=lambda p: (p.pno, p.side == "right", p.blob.y0))
+    placed.sort(key=lambda p: (p.pno, p.band, p.side == "right", p.blob.y0))
     ordered_blobs = [p.blob for p in placed]
     kept = set(map(id, numbering.resolve(ordered_blobs, warnings)))
     placed = [p for p in placed if id(p.blob) in kept and p.blob.number]
