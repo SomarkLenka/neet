@@ -2,6 +2,13 @@
   "_comment": "Support-chat bubble tree. Each node's prompt is self-contained so it can be baked independently (no live session needed). kind: 'direct' answers from the question image + OCR text; 'rag' additionally retrieves reference material via the configured MCP. Dotted ids are stable storage keys. Edit prompts/labels freely before the baking pass.",
   "bubbles": [
     {
+      "id": "answer",
+      "label": "Answer",
+      "kind": "direct",
+      "on_demand": true,
+      "prompt": "Output ONLY the correct option for this question and nothing else: the option number followed by the option's text exactly as written. No explanation, no working, no reasoning, no preamble, no extra words."
+    },
+    {
       "id": "equations",
       "label": "What are the relevant equations?",
       "kind": "direct",

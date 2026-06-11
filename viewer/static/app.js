@@ -196,14 +196,30 @@ function renderBubbles(nodes, { showBack = false } = {}) {
 
 async function clickBubble(node) {
   addMsg("user", node.label);
-  const res = await fetch(`${bakedUrl()}/click`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_id: node.id, label: node.label }),
-  });
-  const data = await res.json();
+  let pending = null;
+  if (node.on_demand) {
+    pending = document.createElement("div");
+    pending.className = "msg assistant pending";
+    pending.textContent = "Finding the answer...";
+    $("chat-messages").appendChild(pending);
+    $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
+  }
+  let data;
+  try {
+    const res = await fetch(`${bakedUrl()}/click`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_id: node.id, label: node.label }),
+    });
+    data = await res.json();
+  } catch (e) {
+    data = { error: e.message };
+  }
+  if (pending) pending.remove();
   if (data.answer) {
     renderAnswer(node, data.answer, data.sources);
+  } else if (data.error) {
+    addMsg("error", data.error);
   } else {
     renderEmpty(node, data.status);
   }

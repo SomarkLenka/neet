@@ -115,10 +115,33 @@ def api_baked(slug, num):
     return jsonify(baked_doc(slug, num))
 
 
+def generate_and_cache(slug: str, num: int, node: dict) -> tuple[dict | None, str | None]:
+    """Generate one bubble node's answer live via claude and cache it into the
+    baked file (status 'ready', so the offline bake later skips it). Returns
+    (entry, error)."""
+    from .bake import question_prompt, save_baked, load_baked
+    m = load_manifest(slug)
+    q = get_question(slug, num)
+    meta = {"number": num, "category": q["category"], "title": m["title"],
+            "image_path": str(EXTRACTED / slug / q["image"]), "text": q.get("text", "")}
+    res = assistant.collect(question_prompt(meta, node["prompt"]), kind=node["kind"])
+    if res.get("error") and not res["text"]:
+        return None, res["error"]
+    entry = {"kind": node["kind"], "answer": res["text"],
+             "status": "ready" if node["kind"] == "direct" else "stub",
+             "sources": res.get("sources") or [], "cost_usd": res.get("cost_usd")}
+    doc = load_baked(slug, num)
+    doc["nodes"][node["id"]] = entry
+    save_baked(doc)
+    return entry, None
+
+
 @app.post("/api/baked/<slug>/<int:num>/click")
 def api_baked_click(slug, num):
     """Student action: record the clicked bubble in chat history and return its
-    pre-baked answer. Never calls the LLM. An unbaked node returns status."""
+    answer. A pre-baked answer is served instantly (no LLM). An empty node that
+    is marked on_demand (e.g. the Answer button) is generated live and cached
+    on first use; other empty nodes just report their status."""
     body = request.get_json(silent=True) or {}
     node_id = (body.get("node_id") or "").strip()
     label = (body.get("label") or "").strip()
@@ -127,9 +150,19 @@ def api_baked_click(slug, num):
     node = baked_doc(slug, num)["nodes"].get(node_id)
     chat = chats.load_chat(slug, num)
     chats.append_message(chat, "user", label or node_id, node_id=node_id, bubble=True)
+
     if not node or node.get("status") == "empty" or not node.get("answer"):
+        tree_node = next((n for n in bubbles.flatten() if n["id"] == node_id), None)
+        if tree_node and tree_node.get("on_demand"):
+            entry, err = generate_and_cache(slug, num, tree_node)
+            if err:
+                return jsonify({"node_id": node_id, "status": "error", "error": err}), 502
+            chats.append_message(chat, "assistant", entry["answer"],
+                                 node_id=node_id, sources=entry.get("sources") or [])
+            return jsonify({"node_id": node_id, **entry})
         status = node.get("status", "missing") if node else "missing"
         return jsonify({"node_id": node_id, "status": status, "answer": None})
+
     chats.append_message(chat, "assistant", node["answer"],
                          node_id=node_id, sources=node.get("sources") or [])
     return jsonify({"node_id": node_id, "status": node.get("status", "ready"),
@@ -138,31 +171,16 @@ def api_baked_click(slug, num):
 
 @app.post("/api/baked/<slug>/<int:num>/generate")
 def api_baked_generate(slug, num):
-    """Admin/preview: generate one node's answer live via claude and cache it
-    into the baked file. This is the path the offline bake also uses; exposed
-    here so prompts can be previewed before a full batch bake."""
+    """Admin/preview: generate one node's answer live and cache it. Same path
+    the offline bake uses; exposed so prompts can be previewed before a bake."""
     body = request.get_json(silent=True) or {}
     node_id = (body.get("node_id") or "").strip()
     node = next((n for n in bubbles.flatten() if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": f"unknown bubble '{node_id}'"}), 404
-
-    m = load_manifest(slug)
-    q = get_question(slug, num)
-    meta = {"number": num, "category": q["category"], "title": m["title"],
-            "image_path": str(EXTRACTED / slug / q["image"]), "text": q.get("text", "")}
-    from .bake import question_prompt, save_baked, load_baked
-    res = assistant.collect(question_prompt(meta, node["prompt"]), kind=node["kind"])
-    if res.get("error") and not res["text"]:
-        return jsonify({"error": res["error"]}), 502
-
-    doc = load_baked(slug, num)
-    doc["nodes"].setdefault(node_id, {})
-    entry = {"kind": node["kind"], "answer": res["text"],
-             "status": "ready" if node["kind"] == "direct" else "stub",
-             "sources": res.get("sources") or [], "cost_usd": res.get("cost_usd")}
-    doc["nodes"][node_id] = entry
-    save_baked(doc)
+    entry, err = generate_and_cache(slug, num, node)
+    if err:
+        return jsonify({"error": err}), 502
     return jsonify({"node_id": node_id, **entry})
 
 

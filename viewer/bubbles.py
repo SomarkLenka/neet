@@ -70,11 +70,14 @@ def client_view(tree: list[dict] | None = None) -> list[dict]:
     tree = load_tree() if tree is None else tree
 
     def strip(node):
-        return {
+        out = {
             "id": node["id"],
             "label": node["label"],
             "kind": node["kind"],
             "followups": [strip(c) for c in node.get("followups", []) or []],
         }
+        if node.get("on_demand"):
+            out["on_demand"] = True   # frontend generates this node live on first click
+        return out
 
     return [strip(n) for n in tree]
