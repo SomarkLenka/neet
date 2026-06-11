@@ -19,6 +19,27 @@ _index_cache = {"data": None, "mtime": None}
 _index_lock = threading.Lock()
 _manifest_cache: dict[str, tuple[float, dict]] = {}
 
+# in-flight on-demand bubble generations, keyed by (slug, num) -> {label, kind}.
+# lets a client that re-enters a question mid-generation show a pending state
+# and poll until the answer lands.
+_generating: dict[tuple, dict] = {}
+_generating_lock = threading.Lock()
+
+
+def _set_generating(slug, num, node):
+    with _generating_lock:
+        _generating[(slug, num)] = {"label": node["label"], "kind": node["kind"]}
+
+
+def _clear_generating(slug, num):
+    with _generating_lock:
+        _generating.pop((slug, num), None)
+
+
+def _get_generating(slug, num):
+    with _generating_lock:
+        return _generating.get((slug, num))
+
 
 def load_index(reload=False):
     """Cached by file mtime, so papers appear as the (still running)
@@ -54,6 +75,11 @@ def get_question(slug: str, num: int) -> dict:
 @app.get("/")
 def home():
     return send_from_directory(STATIC, "index.html")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return send_from_directory(STATIC, "favicon.ico")
 
 
 @app.get("/api/index")
@@ -164,7 +190,11 @@ def api_baked_click(slug, num):
     if not node or node.get("status") == "empty" or not node.get("answer"):
         tree_node = next((n for n in bubbles.flatten() if n["id"] == node_id), None)
         if tree_node and tree_node.get("on_demand"):
-            entry, err = generate_and_cache(slug, num, tree_node)
+            _set_generating(slug, num, tree_node)
+            try:
+                entry, err = generate_and_cache(slug, num, tree_node)
+            finally:
+                _clear_generating(slug, num)
             if err:
                 return jsonify({"node_id": node_id, "status": "error", "error": err}), 502
             chats.append_message(chat, "assistant", entry["answer"],
@@ -200,7 +230,8 @@ def api_baked_generate(slug, num):
 def chat_history(slug, num):
     chat = chats.load_chat(slug, num)
     running = assistant.REGISTRY.running_for(slug, num)
-    return jsonify({**chat, "streaming": running.id if running else None})
+    return jsonify({**chat, "streaming": running.id if running else None,
+                    "generating": _get_generating(slug, num)})
 
 
 @app.delete("/api/chat/<slug>/<int:num>")
