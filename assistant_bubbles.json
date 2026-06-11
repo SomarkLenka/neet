@@ -1,0 +1,92 @@
+{
+  "_comment": "Support-chat bubble tree. Each node's prompt is self-contained so it can be baked independently (no live session needed). kind: 'direct' answers from the question image + OCR text; 'rag' additionally retrieves reference material via the configured MCP. Dotted ids are stable storage keys. Edit prompts/labels freely before the baking pass.",
+  "bubbles": [
+    {
+      "id": "answer",
+      "label": "Answer",
+      "kind": "direct",
+      "on_demand": true,
+      "prompt": "Output ONLY the correct option for this question and nothing else: the option number followed by the option's text exactly as written. No explanation, no working, no reasoning, no preamble, no extra words."
+    },
+    {
+      "id": "equations",
+      "label": "What are the relevant equations?",
+      "kind": "direct",
+      "prompt": "List only the key equations needed to solve this question. For each, define every variable and state its units. Use LaTeX for all math. Do not solve the question yet.",
+      "followups": [
+        {
+          "id": "equations.derive",
+          "label": "Where do these come from?",
+          "kind": "direct",
+          "prompt": "For the key equations relevant to this question, briefly explain where each comes from (the underlying law or definition) so a student understands why it applies here. Use LaTeX."
+        },
+        {
+          "id": "equations.units",
+          "label": "Check my units",
+          "kind": "direct",
+          "prompt": "Walk through a dimensional / unit analysis for the main equation(s) relevant to this question, showing the units cancel correctly to give the answer's units."
+        }
+      ]
+    },
+    {
+      "id": "concepts",
+      "label": "What concepts does this test?",
+      "kind": "direct",
+      "prompt": "Identify the core concepts and topics this question tests. Keep it to a short list a student can use to revise. Do not solve the question.",
+      "followups": [
+        {
+          "id": "concepts.ncert",
+          "label": "Which NCERT chapters?",
+          "kind": "direct",
+          "prompt": "Name the specific NCERT (Class 11/12) chapter(s) and sub-topics a student should revise for this question."
+        },
+        {
+          "id": "concepts.misconceptions",
+          "label": "Common mistakes here",
+          "kind": "direct",
+          "prompt": "List the common mistakes and misconceptions students have on questions like this one, and how to avoid each."
+        }
+      ]
+    },
+    {
+      "id": "solution",
+      "label": "Walk me through the solution",
+      "kind": "direct",
+      "prompt": "Solve this question step by step, showing all working with LaTeX. End by stating the correct option clearly.",
+      "followups": [
+        {
+          "id": "solution.why_wrong",
+          "label": "Why are the other options wrong?",
+          "kind": "direct",
+          "prompt": "For each incorrect option in this question, explain specifically why it is wrong (the error or misconception it represents)."
+        },
+        {
+          "id": "solution.simpler",
+          "label": "Explain the hardest step more simply",
+          "kind": "direct",
+          "prompt": "Identify the single hardest or most error-prone step in solving this question and re-explain just that step in the simplest possible terms, with an analogy if helpful."
+        },
+        {
+          "id": "solution.similar",
+          "label": "Give me a similar practice question",
+          "kind": "direct",
+          "prompt": "Create one new practice question that tests the same concept and method as this one (different numbers/context), then give its answer and a one-line solution outline."
+        }
+      ]
+    },
+    {
+      "id": "material",
+      "label": "Where's the relevant material?",
+      "kind": "rag",
+      "prompt": "Find the reference material a student should review to master this question. Cite specific textbook/NCERT page references or sources you retrieve. If no reference source is available, say so plainly.",
+      "followups": [
+        {
+          "id": "material.summary",
+          "label": "Summarize that material",
+          "kind": "rag",
+          "prompt": "Summarize the key points from the reference material relevant to this question into a concise revision note, citing sources where possible."
+        }
+      ]
+    }
+  ]
+}

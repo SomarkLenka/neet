@@ -1,0 +1,18 @@
+{
+  "_comment": "Isolated settings for the viewer's claude subprocess (loaded via --settings). Empties the hook events so this Claude does not inherit the system Claude's SessionStart/skill/superpowers injection, and pins MCP to only what --mcp-config + --strict-mcp-config provide.",
+  "includeCoAuthoredBy": false,
+  "enableAllProjectMcpServers": false,
+  "enabledMcpjsonServers": [],
+  "disabledMcpjsonServers": [],
+  "hooks": {
+    "SessionStart": [],
+    "SessionEnd": [],
+    "UserPromptSubmit": [],
+    "PreToolUse": [],
+    "PostToolUse": [],
+    "Stop": [],
+    "SubagentStop": [],
+    "Notification": [],
+    "PreCompact": []
+  }
+}

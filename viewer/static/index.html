@@ -32,15 +32,16 @@
   </main>
   <aside id="chat-panel">
     <div id="chat-header">
-      <span>AI Assistant</span>
+      <span>Study Help</span>
       <span>
-        <button id="chat-stop" title="Stop response" disabled>&#9632;</button>
-        <button id="chat-reset" title="Reset this chat">&#10227;</button>
+        <button id="chat-stop" title="Stop response" disabled hidden>&#9632;</button>
+        <button id="chat-reset" title="Start over">&#10227;</button>
       </span>
     </div>
     <div id="chat-messages"></div>
-    <form id="chat-form">
-      <textarea id="chat-input" rows="2" placeholder="Ask about this question... (Enter to send, Shift+Enter for newline)"></textarea>
+    <div id="bubble-bar"></div>
+    <form id="chat-form" hidden>
+      <textarea id="chat-input" rows="2" placeholder="Ask anything... (Enter to send, Shift+Enter for newline)"></textarea>
       <button id="chat-send" type="submit">Send</button>
     </form>
   </aside>

@@ -7,6 +7,7 @@ route drains. assistant_config.json is reloaded on every turn, so model, MCP
 servers (--mcp-config) and allowed tools can change without a restart.
 """
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -37,12 +38,21 @@ def debug_log(event: str, **fields) -> None:
     except OSError:
         pass
 
+# Effective defaults. The shipped assistant_config.json restates these
+# explicitly so every knob is user-editable in one place; this dict is only a
+# fallback for keys a hand-edited config happens to omit.
 DEFAULT_CONFIG = {
-    "claude_path": None,
+    "claude_command": None,    # full argv prefix to invoke claude, e.g. ["claude"]
+    "claude_path": None,       # path to a claude executable (if claude_command unset)
     "model": None,
     "allowed_tools": ["Read"],
-    "append_system_prompt": "",
-    "mcp_config": None,
+    "system_prompt": None,             # replaces the default system prompt (--system-prompt)
+    "append_system_prompt": None,      # or append instead (--append-system-prompt)
+    "exclude_dynamic_system_prompt_sections": False,  # strip per-machine prompt sections
+    "mcp_config": None,                # --mcp-config <file>
+    "strict_mcp_config": False,        # ignore all other MCP config (--strict-mcp-config)
+    "settings": None,                  # isolated settings file (--settings <file>)
+    "config_dir": None,                # isolated CLAUDE_CONFIG_DIR (no system hooks/skills/plugins)
     "extra_args": [],
     "timeout_seconds": 300,
 }
@@ -63,33 +73,146 @@ def load_config() -> dict:
     return cfg
 
 
+def subprocess_env(cfg: dict) -> dict:
+    """Environment for the claude subprocess. When config_dir is set, point
+    CLAUDE_CONFIG_DIR at an isolated home that carries the live credentials but
+    none of the system Claude's hooks/skills/plugins/MCP — fully isolating this
+    Claude from the developer's environment. Credentials are re-copied each
+    spawn so a token refresh in the real home propagates."""
+    env = os.environ.copy()
+    iso = cfg.get("config_dir")
+    if not iso:
+        return env
+    iso_path = Path(iso) if os.path.isabs(iso) else (PROJECT_ROOT / iso)
+    iso_path.mkdir(parents=True, exist_ok=True)
+    real = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    try:
+        cred = real / ".credentials.json"
+        if cred.exists():
+            shutil.copy2(cred, iso_path / ".credentials.json")
+        settings_src = PROJECT_ROOT / "claude_settings.json"
+        if settings_src.exists():
+            shutil.copy2(settings_src, iso_path / "settings.json")
+    except OSError as e:
+        debug_log("config_dir_setup_failed", error=str(e), dir=str(iso_path))
+    env["CLAUDE_CONFIG_DIR"] = str(iso_path)
+    return env
+
+
 def resolve_claude(cfg: dict) -> list[str]:
+    """Base argv to invoke the claude CLI. `claude_command` (a list) overrides
+    everything — use it to wrap the CLI (e.g. ["wsl","claude"] or
+    ["node","C:/path/cli.js"]). Otherwise fall back to `claude_path` or PATH."""
+    cmd = cfg.get("claude_command")
+    if cmd:
+        return list(cmd) if isinstance(cmd, (list, tuple)) else [str(cmd)]
     exe = cfg.get("claude_path") or shutil.which("claude")
     if not exe:
         raise AssistantError(
-            "claude CLI not found. Install it or set claude_path in assistant_config.json.")
+            "claude CLI not found. Install it, set claude_path, or set claude_command "
+            "in assistant_config.json.")
     if exe.lower().endswith((".cmd", ".bat")):
         return ["cmd", "/c", exe]
     return [exe]
 
 
-def build_command(cfg: dict, session_id: str | None) -> list[str]:
-    cmd = resolve_claude(cfg) + [
-        "-p", "--output-format", "stream-json",
-        "--include-partial-messages", "--verbose",
-    ]
+def build_command(cfg: dict, session_id: str | None, *, stream: bool = True) -> list[str]:
+    cmd = resolve_claude(cfg) + ["-p", "--output-format", "stream-json", "--verbose"]
+    if stream:
+        cmd += ["--include-partial-messages"]
     if cfg.get("model"):
         cmd += ["--model", cfg["model"]]
     if cfg.get("allowed_tools"):
         cmd += ["--allowedTools", ",".join(cfg["allowed_tools"])]
+    if cfg.get("system_prompt"):
+        cmd += ["--system-prompt", cfg["system_prompt"]]
     if cfg.get("append_system_prompt"):
         cmd += ["--append-system-prompt", cfg["append_system_prompt"]]
+    if cfg.get("exclude_dynamic_system_prompt_sections"):
+        cmd += ["--exclude-dynamic-system-prompt-sections"]
+    if cfg.get("settings"):
+        cmd += ["--settings", cfg["settings"]]
     if cfg.get("mcp_config"):
         cmd += ["--mcp-config", cfg["mcp_config"]]
+    if cfg.get("strict_mcp_config"):
+        cmd += ["--strict-mcp-config"]
     if session_id:
         cmd += ["--resume", session_id]
     cmd += cfg.get("extra_args") or []
     return cmd
+
+
+def collect(prompt: str, *, kind: str = "direct", cfg: dict | None = None,
+            timeout: int | None = None) -> dict:
+    """One-shot, non-streaming claude run for the baker. Returns
+    {"text", "sources", "cost_usd", "session_id", "error"}.
+
+    `kind == "rag"` keeps the configured MCP/tools so the model can retrieve
+    reference material; with no mcp_config set it simply answers without it
+    (the caller marks such answers as stubs). Never raises — failures come
+    back in "error" so a batch bake never dies on one bad question."""
+    if cfg is None:
+        try:
+            cfg = load_config()
+        except AssistantError as e:
+            return {"text": "", "sources": [], "cost_usd": None,
+                    "session_id": None, "error": str(e)}
+    try:
+        cmd = build_command(cfg, None, stream=False)
+    except AssistantError as e:
+        return {"text": "", "sources": [], "cost_usd": None, "session_id": None, "error": str(e)}
+
+    t0 = time.monotonic()
+    debug_log("collect_start", kind=kind, cmd=cmd, prompt=prompt)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(PROJECT_ROOT), input=prompt, env=subprocess_env(cfg),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", errors="replace",
+            timeout=timeout or (cfg.get("timeout_seconds") or 300) + 30,
+        )
+    except subprocess.TimeoutExpired:
+        debug_log("collect_timeout", kind=kind)
+        return {"text": "", "sources": [], "cost_usd": None, "session_id": None,
+                "error": "claude timed out"}
+    except OSError as e:
+        return {"text": "", "sources": [], "cost_usd": None, "session_id": None,
+                "error": f"could not start claude: {e}"}
+
+    final_text, session_id, cost, result_err = "", None, None, None
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = msg.get("type")
+        if t == "system" and msg.get("subtype") == "init":
+            session_id = msg.get("session_id") or session_id
+        elif t == "assistant":
+            blocks = ((msg.get("message") or {}).get("content")) or []
+            texts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+            if texts:
+                final_text = "\n".join(texts)
+        elif t == "result":
+            session_id = msg.get("session_id") or session_id
+            cost = msg.get("total_cost_usd")
+            if msg.get("is_error"):
+                result_err = msg.get("result") or "claude reported an error"
+            elif not final_text:
+                final_text = msg.get("result", "")
+
+    err = result_err
+    if proc.returncode != 0 and not final_text:
+        tail = "\n".join(proc.stderr.splitlines()[-10:]).strip()
+        err = err or tail or f"claude exited with code {proc.returncode}"
+    debug_log("collect_end", kind=kind, exit_code=proc.returncode,
+              duration_s=round(time.monotonic() - t0, 1), cost_usd=cost,
+              text_chars=len(final_text), error=err)
+    return {"text": final_text, "sources": [], "cost_usd": cost,
+            "session_id": session_id, "error": err if not final_text else None}
 
 
 def first_turn_prompt(meta: dict, user_message: str) -> str:
@@ -158,7 +281,7 @@ class Turn:
         try:
             with self._lock:
                 self.proc = subprocess.Popen(
-                    cmd, cwd=str(PROJECT_ROOT),
+                    cmd, cwd=str(PROJECT_ROOT), env=subprocess_env(cfg),
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     encoding="utf-8", errors="replace",
                 )

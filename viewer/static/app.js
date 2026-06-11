@@ -2,8 +2,12 @@
 
 const $ = (id) => document.getElementById(id);
 
+const ADMIN = new URLSearchParams(location.search).get("admin") === "1";
+
 const state = {
   index: null,
+  bubbles: [],           // bubble tree (client view)
+  baked: {},             // node_id -> {status, answer, sources} for current question
   mode: "category",      // "category" | "paper"
   category: "physics",
   paper: "",             // slug filter ("" = all papers in category mode)
@@ -15,12 +19,18 @@ const state = {
 // ---------- bootstrap ----------------------------------------------------
 
 async function init() {
+  if (ADMIN) document.body.classList.add("admin");
   const res = await fetch("/api/index");
   if (!res.ok) {
     $("nav-status").textContent = (await res.json()).error || "failed to load index";
     return;
   }
   state.index = await res.json();
+  try {
+    const b = await (await fetch("/api/bubbles")).json();
+    state.bubbles = b.bubbles || [];
+  } catch (_) { state.bubbles = []; }
+  if (ADMIN) $("chat-form").hidden = false;
   renderModeToggle();
   renderCategoryTabs();
   renderPaperSelect();
@@ -128,11 +138,141 @@ async function loadChat() {
   const box = $("chat-messages");
   box.innerHTML = "";
   if (!state.current) return;
+  // baked answers for this question (drives the bubbles)
+  try {
+    const doc = await (await fetch(bakedUrl())).json();
+    state.baked = doc.nodes || {};
+  } catch (_) { state.baked = {}; }
+
   const res = await fetch(chatUrl());
   const chat = await res.json();
   for (const m of chat.messages) addMsg(m.role, m.content, m);
   if (chat.streaming) attachStream(chat.streaming, addMsg("assistant", "", {}));
+
+  // resume the branch: show follow-ups of the last clicked bubble, else top level
+  const lastNode = [...chat.messages].reverse().find((m) => m.node_id)?.node_id;
+  renderBubbles(lastNode ? followupsOf(lastNode) : state.bubbles);
   box.scrollTop = box.scrollHeight;
+}
+
+// ---------- support bubbles ----------------------------------------------
+
+function bakedUrl() {
+  return `/api/baked/${state.current.paper}/${state.current.number}`;
+}
+
+function findNode(nodeId, tree = state.bubbles) {
+  for (const n of tree) {
+    if (n.id === nodeId) return n;
+    const hit = findNode(nodeId, n.followups || []);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function followupsOf(nodeId) {
+  return findNode(nodeId)?.followups || [];
+}
+
+function renderBubbles(nodes, { showBack = false } = {}) {
+  const bar = $("bubble-bar");
+  bar.innerHTML = "";
+  if (!state.current || !nodes) return;
+  if (showBack) {
+    const back = document.createElement("button");
+    back.className = "bubble-back";
+    back.textContent = "← start over";
+    back.onclick = () => renderBubbles(state.bubbles);
+    bar.appendChild(back);
+  }
+  for (const node of nodes) {
+    const b = document.createElement("button");
+    b.className = "bubble-btn" + (showBack ? " followup" : "");
+    b.textContent = node.label;
+    b.onclick = () => clickBubble(node);
+    bar.appendChild(b);
+  }
+}
+
+async function clickBubble(node) {
+  addMsg("user", node.label);
+  let pending = null;
+  if (node.on_demand) {
+    pending = document.createElement("div");
+    pending.className = "msg assistant pending";
+    pending.textContent = "Finding the answer...";
+    $("chat-messages").appendChild(pending);
+    $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
+  }
+  let data;
+  try {
+    const res = await fetch(`${bakedUrl()}/click`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_id: node.id, label: node.label }),
+    });
+    data = await res.json();
+  } catch (e) {
+    data = { error: e.message };
+  }
+  if (pending) pending.remove();
+  if (data.answer) {
+    renderAnswer(node, data.answer, data.sources);
+  } else if (data.error) {
+    addMsg("error", data.error);
+  } else {
+    renderEmpty(node, data.status);
+  }
+  const next = node.followups || [];
+  renderBubbles(next.length ? next : state.bubbles, { showBack: next.length > 0 });
+}
+
+function renderAnswer(node, answer, sources) {
+  const div = addMsg("assistant", answer);
+  if (sources && sources.length) {
+    const s = document.createElement("div");
+    s.className = "bubble-sources";
+    s.innerHTML = "Sources: " + sources.map((x) =>
+      escapeHtml(typeof x === "string" ? x : (x.title || x.page || JSON.stringify(x)))).join(" · ");
+    div.appendChild(s);
+  }
+}
+
+function renderEmpty(node, status) {
+  const div = document.createElement("div");
+  div.className = "msg assistant pending";
+  div.textContent = "Not available yet for this question.";
+  $("chat-messages").appendChild(div);
+  if (ADMIN) {
+    const g = document.createElement("div");
+    g.className = "msg gen-btn";
+    const btn = document.createElement("button");
+    btn.textContent = "⚡ Generate now (admin)";
+    btn.onclick = () => generateNode(node, div, btn);
+    g.appendChild(btn);
+    $("chat-messages").appendChild(g);
+  }
+  $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
+}
+
+async function generateNode(node, pendingDiv, btn) {
+  btn.disabled = true;
+  btn.textContent = "generating...";
+  try {
+    const res = await fetch(`${bakedUrl()}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_id: node.id }),
+    });
+    const data = await res.json();
+    if (!res.ok) { btn.textContent = "error: " + (data.error || "failed"); return; }
+    state.baked[node.id] = data;
+    pendingDiv.parentElement && btn.parentElement.remove();
+    pendingDiv.className = "msg assistant";
+    renderInto(pendingDiv, data.answer);
+  } catch (e) {
+    btn.textContent = "error: " + e.message;
+  }
 }
 
 function renderInto(el, text) {
@@ -243,7 +383,7 @@ $("chat-stop").onclick = () => { if (state.current) fetch(chatUrl("/stop"), { me
 
 $("chat-reset").onclick = async () => {
   if (!state.current) return;
-  if (!confirm("Delete this question's chat history?")) return;
+  if (!confirm("Clear this question's conversation?")) return;
   closeStream();
   await fetch(chatUrl(), { method: "DELETE" });
   loadChat();

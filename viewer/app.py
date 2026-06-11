@@ -6,10 +6,11 @@ from pathlib import Path
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from . import assistant, chats
+from . import assistant, bubbles, chats
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXTRACTED = PROJECT_ROOT / "extracted"
+BAKED = PROJECT_ROOT / "data" / "baked"
 STATIC = Path(__file__).resolve().parent / "static"
 
 app = Flask(__name__, static_folder=str(STATIC), static_url_path="/static")
@@ -73,6 +74,114 @@ def api_question(slug, num):
 @app.get("/img/<slug>/<path:fname>")
 def img(slug, fname):
     return send_from_directory(EXTRACTED / slug, fname)
+
+
+# ---- support bubbles (pre-baked answers) ---------------------------------
+
+_bubbles_cache = {"tree": None, "mtime": None}
+
+
+def bubble_tree_view():
+    """Client-safe bubble tree, cached by file mtime so edits to
+    assistant_bubbles.json show up without a restart."""
+    p = bubbles.BUBBLES_PATH
+    mtime = p.stat().st_mtime if p.exists() else None
+    if mtime != _bubbles_cache["mtime"]:
+        _bubbles_cache["tree"] = bubbles.client_view()
+        _bubbles_cache["mtime"] = mtime
+    return _bubbles_cache["tree"]
+
+
+def baked_doc(slug: str, num: int) -> dict:
+    p = BAKED / slug / f"{num}.json"
+    if not p.exists():
+        return {"paper": slug, "number": num, "nodes": {}}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"paper": slug, "number": num, "nodes": {}}
+
+
+@app.get("/api/bubbles")
+def api_bubbles():
+    try:
+        return jsonify({"bubbles": bubble_tree_view()})
+    except bubbles.BubblesError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/baked/<slug>/<int:num>")
+def api_baked(slug, num):
+    return jsonify(baked_doc(slug, num))
+
+
+def generate_and_cache(slug: str, num: int, node: dict) -> tuple[dict | None, str | None]:
+    """Generate one bubble node's answer live via claude and cache it into the
+    baked file (status 'ready', so the offline bake later skips it). Returns
+    (entry, error)."""
+    from .bake import question_prompt, save_baked, load_baked
+    m = load_manifest(slug)
+    q = get_question(slug, num)
+    meta = {"number": num, "category": q["category"], "title": m["title"],
+            "image_path": str(EXTRACTED / slug / q["image"]), "text": q.get("text", "")}
+    res = assistant.collect(question_prompt(meta, node["prompt"]), kind=node["kind"])
+    if res.get("error") and not res["text"]:
+        return None, res["error"]
+    entry = {"kind": node["kind"], "answer": res["text"],
+             "status": "ready" if node["kind"] == "direct" else "stub",
+             "sources": res.get("sources") or [], "cost_usd": res.get("cost_usd")}
+    doc = load_baked(slug, num)
+    doc["nodes"][node["id"]] = entry
+    save_baked(doc)
+    return entry, None
+
+
+@app.post("/api/baked/<slug>/<int:num>/click")
+def api_baked_click(slug, num):
+    """Student action: record the clicked bubble in chat history and return its
+    answer. A pre-baked answer is served instantly (no LLM). An empty node that
+    is marked on_demand (e.g. the Answer button) is generated live and cached
+    on first use; other empty nodes just report their status."""
+    body = request.get_json(silent=True) or {}
+    node_id = (body.get("node_id") or "").strip()
+    label = (body.get("label") or "").strip()
+    if not node_id:
+        return jsonify({"error": "node_id required"}), 400
+    node = baked_doc(slug, num)["nodes"].get(node_id)
+    chat = chats.load_chat(slug, num)
+    chats.append_message(chat, "user", label or node_id, node_id=node_id, bubble=True)
+
+    if not node or node.get("status") == "empty" or not node.get("answer"):
+        tree_node = next((n for n in bubbles.flatten() if n["id"] == node_id), None)
+        if tree_node and tree_node.get("on_demand"):
+            entry, err = generate_and_cache(slug, num, tree_node)
+            if err:
+                return jsonify({"node_id": node_id, "status": "error", "error": err}), 502
+            chats.append_message(chat, "assistant", entry["answer"],
+                                 node_id=node_id, sources=entry.get("sources") or [])
+            return jsonify({"node_id": node_id, **entry})
+        status = node.get("status", "missing") if node else "missing"
+        return jsonify({"node_id": node_id, "status": status, "answer": None})
+
+    chats.append_message(chat, "assistant", node["answer"],
+                         node_id=node_id, sources=node.get("sources") or [])
+    return jsonify({"node_id": node_id, "status": node.get("status", "ready"),
+                    "answer": node["answer"], "sources": node.get("sources") or []})
+
+
+@app.post("/api/baked/<slug>/<int:num>/generate")
+def api_baked_generate(slug, num):
+    """Admin/preview: generate one node's answer live and cache it. Same path
+    the offline bake uses; exposed so prompts can be previewed before a bake."""
+    body = request.get_json(silent=True) or {}
+    node_id = (body.get("node_id") or "").strip()
+    node = next((n for n in bubbles.flatten() if n["id"] == node_id), None)
+    if not node:
+        return jsonify({"error": f"unknown bubble '{node_id}'"}), 404
+    entry, err = generate_and_cache(slug, num, node)
+    if err:
+        return jsonify({"error": err}), 502
+    return jsonify({"node_id": node_id, **entry})
 
 
 # ---- chat ----------------------------------------------------------------
