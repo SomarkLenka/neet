@@ -116,7 +116,8 @@ def resolve_claude(cfg: dict) -> list[str]:
     return [exe]
 
 
-def build_command(cfg: dict, session_id: str | None, *, stream: bool = True) -> list[str]:
+def build_command(cfg: dict, session_id: str | None, *, stream: bool = True,
+                  with_mcp: bool = True) -> list[str]:
     cmd = resolve_claude(cfg) + ["-p", "--output-format", "stream-json", "--verbose"]
     if stream:
         cmd += ["--include-partial-messages"]
@@ -132,10 +133,10 @@ def build_command(cfg: dict, session_id: str | None, *, stream: bool = True) -> 
         cmd += ["--exclude-dynamic-system-prompt-sections"]
     if cfg.get("settings"):
         cmd += ["--settings", cfg["settings"]]
-    if cfg.get("mcp_config"):
+    if with_mcp and cfg.get("mcp_config"):
         cmd += ["--mcp-config", cfg["mcp_config"]]
-    if cfg.get("strict_mcp_config"):
-        cmd += ["--strict-mcp-config"]
+        if cfg.get("strict_mcp_config"):
+            cmd += ["--strict-mcp-config"]
     if session_id:
         cmd += ["--resume", session_id]
     cmd += cfg.get("extra_args") or []
@@ -158,7 +159,9 @@ def collect(prompt: str, *, kind: str = "direct", cfg: dict | None = None,
             return {"text": "", "sources": [], "cost_usd": None,
                     "session_id": None, "error": str(e)}
     try:
-        cmd = build_command(cfg, None, stream=False)
+        # only RAG nodes need the (slow-to-start) neet-rag MCP server attached;
+        # direct reasoning nodes skip it entirely to avoid per-spawn cold-start
+        cmd = build_command(cfg, None, stream=False, with_mcp=(kind == "rag"))
     except AssistantError as e:
         return {"text": "", "sources": [], "cost_usd": None, "session_id": None, "error": str(e)}
 

@@ -155,7 +155,7 @@ def main():
                     "image_path": str(EXTRACTED / slug / q["image"]), "text": q.get("text", ""),
                 }
                 todo = [nid for nid, e in doc["nodes"].items()
-                        if args.force or e.get("status") == "empty"]
+                        if args.force or e.get("status") in ("empty", "error")]
                 if todo:
                     with ThreadPoolExecutor(max_workers=args.workers) as pool:
                         results = pool.map(

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from . import assistant, bubbles, chats
+from . import assistant, books, bubbles, chats, rag_server
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXTRACTED = PROJECT_ROOT / "extracted"
@@ -76,6 +76,16 @@ def img(slug, fname):
     return send_from_directory(EXTRACTED / slug, fname)
 
 
+@app.get("/books/<code>")
+def book(code):
+    """Serve a chapter PDF by its NCERT code, inline so the browser opens it
+    (the assistant links these with a #page=N anchor to jump to a page)."""
+    pdf = books.resolve(code)
+    if not pdf:
+        abort(404, "unknown textbook code")
+    return send_from_directory(pdf.parent, pdf.name, mimetype="application/pdf")
+
+
 # ---- support bubbles (pre-baked answers) ---------------------------------
 
 _bubbles_cache = {"tree": None, "mtime": None}
@@ -128,7 +138,7 @@ def generate_and_cache(slug: str, num: int, node: dict) -> tuple[dict | None, st
     if res.get("error") and not res["text"]:
         return None, res["error"]
     entry = {"kind": node["kind"], "answer": res["text"],
-             "status": "ready" if node["kind"] == "direct" else "stub",
+             "status": "ready" if res["text"] else "error",
              "sources": res.get("sources") or [], "cost_usd": res.get("cost_usd")}
     doc = load_baked(slug, num)
     doc["nodes"][node["id"]] = entry
@@ -267,4 +277,5 @@ def chat_stream(stream_id):
 
 
 if __name__ == "__main__":
+    rag_server.ensure_started()   # spawn the warm neet-rag server; dies with the viewer
     app.run(host="127.0.0.1", port=5000, threaded=True, debug=False)

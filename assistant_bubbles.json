@@ -78,13 +78,15 @@
       "id": "material",
       "label": "Where's the relevant material?",
       "kind": "rag",
-      "prompt": "Find the reference material a student should review to master this question. Cite specific textbook/NCERT page references or sources you retrieve. If no reference source is available, say so plainly.",
+      "on_demand": true,
+      "prompt": "You MUST use the neet-rag MCP tools for this. Call mcp__neet-rag__search_textbooks with this question's topic to find the relevant NCERT material, and call mcp__neet-rag__get_pages on a promising hit's code if you need more context. Then list the specific chapters and pages the student should review, each as a clickable [label](/books/<code>#page=<pdf_page>) link built from the tool results. Do not answer from memory; if the tools return nothing relevant, say so plainly.",
       "followups": [
         {
           "id": "material.summary",
           "label": "Summarize that material",
           "kind": "rag",
-          "prompt": "Summarize the key points from the reference material relevant to this question into a concise revision note, citing sources where possible."
+          "on_demand": true,
+          "prompt": "You MUST use the neet-rag MCP tools for this. Call mcp__neet-rag__search_textbooks for this question's topic (and mcp__neet-rag__get_pages for detail), then summarize the key points from the retrieved NCERT material into a concise revision note, citing chapters and pages as clickable [label](/books/<code>#page=<pdf_page>) links built from the tool results. Do not summarize from memory."
         }
       ]
     }

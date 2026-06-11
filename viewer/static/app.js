@@ -149,9 +149,11 @@ async function loadChat() {
   for (const m of chat.messages) addMsg(m.role, m.content, m);
   if (chat.streaming) attachStream(chat.streaming, addMsg("assistant", "", {}));
 
-  // resume the branch: show follow-ups of the last clicked bubble, else top level
+  // resume the branch exactly as a click would leave it: a node with follow-ups
+  // shows them plus "start over"; a leaf node returns to the top-level bubbles.
   const lastNode = [...chat.messages].reverse().find((m) => m.node_id)?.node_id;
-  renderBubbles(lastNode ? followupsOf(lastNode) : state.bubbles);
+  const next = lastNode ? followupsOf(lastNode) : [];
+  renderBubbles(next.length ? next : state.bubbles, { showBack: next.length > 0 });
   box.scrollTop = box.scrollHeight;
 }
 
@@ -194,19 +196,26 @@ function renderBubbles(nodes, { showBack = false } = {}) {
   }
 }
 
+function isCurrent(q) {
+  return state.current && q && state.current.paper === q.paper && state.current.number === q.number;
+}
+
 async function clickBubble(node) {
+  const origin = state.current;                       // question this click belongs to
+  const url = `/api/baked/${origin.paper}/${origin.number}`;
   addMsg("user", node.label);
   let pending = null;
   if (node.on_demand) {
     pending = document.createElement("div");
     pending.className = "msg assistant pending";
-    pending.textContent = "Finding the answer...";
+    pending.textContent = node.kind === "rag"
+      ? "Searching the textbooks..." : "Finding the answer...";
     $("chat-messages").appendChild(pending);
     $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
   }
   let data;
   try {
-    const res = await fetch(`${bakedUrl()}/click`, {
+    const res = await fetch(`${url}/click`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ node_id: node.id, label: node.label }),
@@ -215,6 +224,9 @@ async function clickBubble(node) {
   } catch (e) {
     data = { error: e.message };
   }
+  // navigated away while this generated: it's cached + saved to origin's history,
+  // so don't draw into whatever question is now on screen.
+  if (!isCurrent(origin)) return;
   if (pending) pending.remove();
   if (data.answer) {
     renderAnswer(node, data.answer, data.sources);
@@ -399,6 +411,9 @@ function renderMarkdown(s) {
   let html = escapeHtml(s);
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, l, code) => `<pre><code>${code}</code></pre>`);
   html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  // [label](url) -> link opening in a new tab; only http(s) or same-origin /path
+  html = html.replace(/\[([^\]\n]+)\]\((\/[^)\s]+|https?:\/\/[^)\s]+)\)/g,
+    (_, label, url) => `<a href="${url}" target="_blank" rel="noopener">${label}</a>`);
   html = html.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/^### (.+)$/gm, "<strong>$1</strong>");
   html = html.replace(/^## (.+)$/gm, "<strong>$1</strong>");

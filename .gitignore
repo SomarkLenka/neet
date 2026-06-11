@@ -1,5 +1,6 @@
 # source PDFs (large, not redistributable)
 papers/
+books/
 
 # pipeline output and runtime data
 extracted/
