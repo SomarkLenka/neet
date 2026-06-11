@@ -273,6 +273,10 @@ def process_paper(pdf_path, out_root, debug=False):
 
     warnings: list[str] = []
     doc = fitz.open(pdf_path)
+    if doc.page_count > config.MAX_EXAM_PAGES:
+        doc.close()
+        raise ValueError(f"{doc.page_count} pages exceeds MAX_EXAM_PAGES="
+                         f"{config.MAX_EXAM_PAGES}; treating as study material, not an exam")
     placed, skipped, page_vals = detect_paper(doc, debug_dir, warnings)
 
     bilingual = numbering.is_bilingual(page_vals)

@@ -13,8 +13,15 @@ EXTRACTED_DIR = PROJECT_ROOT / "extracted"
 DPI = 300
 ZOOM = DPI / 72.0
 
-# Not an exam paper (user-confirmed exclusion). Case-insensitive name match.
-EXCLUDE_NAMES = {"allen_success_mantra_biology-1_ocr.pdf"}
+# Not exam papers (study notes / books). Case-insensitive name match.
+EXCLUDE_NAMES = {
+    "allen_success_mantra_biology-1_ocr.pdf",
+    "doc-20250128-wa0005._ocr.pdf",  # 489-page chemistry notes, not an exam
+}
+
+# A 180-question 2-column NEET paper renders to ~24-55 pages. Anything far
+# larger is study material, not an exam — skip it rather than churn for ages.
+MAX_EXAM_PAGES = 90
 
 # Subject ranges by question number (NEET 180-question format).
 CATEGORY_BOUNDS = [
