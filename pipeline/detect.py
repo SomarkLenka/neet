@@ -60,6 +60,28 @@ def find_question_blobs(col: np.ndarray) -> tuple[list[Blob], tuple[int, int]]:
 
     rows = strip.sum(axis=1)
     on = rows >= 2
+    # blank out rows whose ink runs (nearly) the full gutter width — divider
+    # rules, header bars, the watermark ribbon. Without this, a question
+    # number adjacent to such a band merges into one rejected mega-blob.
+    # A row that is wide at the normal threshold but narrow when only truly
+    # dark pixels count is a digit printed over a light watermark: keep it,
+    # using the dark mask so the digit's geometry is what gets measured.
+    wide = 0.7 * (gx1 - gx0)
+    dark = col[:, gx0:gx1] < 80
+
+    def max_run(mask_row):
+        xs = np.nonzero(mask_row)[0]
+        if xs.size == 0:
+            return 0
+        runs = np.split(xs, np.nonzero(np.diff(xs) > 1)[0] + 1)
+        return max(len(r) for r in runs)
+
+    for y in np.nonzero(on)[0]:
+        if max_run(strip[y]) > wide:
+            if dark[y].sum() >= 2 and max_run(dark[y]) <= wide:
+                strip[y] = dark[y]
+            else:
+                on[y] = False
     y_top, y_bot = int(h * config.HEADER_FRAC), int(h * config.FOOTER_FRAC)
 
     blobs: list[Blob] = []

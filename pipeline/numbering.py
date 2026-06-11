@@ -43,15 +43,22 @@ def classify_token(txt: str) -> tuple[str | None, int | None]:
 def ocr_blob(crop: np.ndarray | None) -> tuple[str | None, int | None]:
     if crop is None or crop.size == 0:
         return None, None
-    img = Image.fromarray(crop).convert("L")
-    img = img.resize((img.width * 3, img.height * 3), Image.LANCZOS)
-    try:
-        txt = pytesseract.image_to_string(
-            img, config="--psm 7 -c tessedit_char_whitelist=0123456789.()"
-        ).strip()
-    except Exception:
-        return None, None
-    return classify_token(txt)
+    base = Image.fromarray(crop).convert("L")
+    base = base.resize((base.width * 3, base.height * 3), Image.LANCZOS)
+    # hard-binarized variant strips light watermarks behind the digits
+    binar = base.point(lambda v: 0 if v < 110 else 255)
+    for img in (base, binar):
+        for psm in (7, 8, 6):
+            try:
+                txt = pytesseract.image_to_string(
+                    img, config=f"--psm {psm} -c tessedit_char_whitelist=0123456789.()"
+                ).strip()
+            except Exception:
+                return None, None
+            kind, val = classify_token(txt)
+            if kind:
+                return kind, val
+    return None, None
 
 
 def text_anchors(page: fitz.Page, x_offset_px: int, gutter: tuple[int, int]) -> list[tuple[str, int, float, float, float]]:

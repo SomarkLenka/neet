@@ -34,7 +34,8 @@ GUTTER_BAND_PT = 75
 # Digit-line height range in px at 300dpi ("1." rendered ~65px in all samples).
 BLOB_H_RANGE = (38, 110)
 # Rows closer together than this merge into one blob (anti-aliasing gaps).
-BLOB_GAP_PX = 8
+# Keep small: watermark ink starting a few px below a digit must NOT merge in.
+BLOB_GAP_PX = 3
 # Minimum ink pixels for a blob to count (rejects specks / faint bleed).
 BLOB_MIN_INK = 60
 # Header/footer exclusion bands as fractions of page height.

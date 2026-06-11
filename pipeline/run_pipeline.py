@@ -97,6 +97,95 @@ def _debug_overlay(gray, divider, overlays, debug_dir, pno):
         os.path.join(debug_dir, f"page{pno + 1:02d}.jpg"), quality=70)
 
 
+def rescue_missing(doc, placed: list[Placed], warnings) -> int:
+    """Second-chance pass for question numbers the blob detector missed (e.g.
+    digits printed over a dark watermark ribbon).
+
+    For every missing number, Tesseract-search the gutter band of all columns
+    between the two nearest RELIABLE neighbours (text/ocr-sourced — inferred
+    labels next to a gap are often shifted themselves), in both the raw image
+    and a hard-binarized version that erases grey watermarks. Hits are added
+    as strong anchors; the caller re-runs the resolver so neighbouring labels
+    self-correct. Returns the number of rescued marks."""
+    import pytesseract
+    from PIL import Image
+    import numpy as np
+
+    by_num = {p.blob.number: p for p in placed}
+    nums = sorted(by_num)
+    missing = [n for n in range(1, (nums[-1] if nums else 0) + 1) if n not in by_num]
+    if not missing:
+        return 0
+
+    page_cache: dict[int, object] = {}
+
+    def column(pno, side):
+        if pno not in page_cache:
+            page = doc[pno]
+            page_cache[pno] = pdf_pages.split_columns(pno, page, pdf_pages.render_gray(page))
+        return next(c for c in page_cache[pno].columns if c.side == side)
+
+    def anchor(n, step):
+        while 1 <= n <= config.MAX_QUESTION:
+            p = by_num.get(n)
+            if p and p.blob.source != "inferred":
+                return p
+            n += step
+        return None
+
+    # reading-order list of (pno, side) columns that contain questions
+    cols_seq = sorted({(p.pno, p.side) for p in placed},
+                      key=lambda c: (c[0], c[1] == "right"))
+
+    def search_band(col, y0, y1, token_full, token_bare):
+        if y1 - y0 < 60:
+            return None
+        indent = detect.estimate_body_indent(col.arr)
+        gx0 = max(20, indent - int(config.GUTTER_BAND_PT * config.ZOOM))
+        band = col.arr[y0:y1, gx0:indent]
+        variants = [band, np.where(band < 80, 0, 255).astype(np.uint8)]
+        for arr in variants:
+            try:
+                data = pytesseract.image_to_data(
+                    Image.fromarray(arr),
+                    config="--psm 6 -c tessedit_char_whitelist=0123456789.",
+                    output_type=pytesseract.Output.DICT)
+            except Exception:
+                return None
+            for i, t in enumerate(data["text"]):
+                t = t.strip()
+                if t == token_full or t == token_bare:
+                    return y0 + data["top"][i], data["height"][i]
+        return None
+
+    rescued = 0
+    for n in missing:
+        lo, hi = anchor(n - 1, -1), anchor(n + 1, +1)
+        if not lo or not hi:
+            continue
+        lo_key, hi_key = (lo.pno, lo.side), (hi.pno, hi.side)
+        try:
+            i0, i1 = cols_seq.index(lo_key), cols_seq.index(hi_key)
+        except ValueError:
+            continue
+        for key in cols_seq[i0:i1 + 1]:
+            col = column(*key)
+            h = col.arr.shape[0]
+            y0 = lo.blob.y1 + 10 if key == lo_key else int(h * config.HEADER_FRAC)
+            y1 = hi.blob.y0 - 5 if key == hi_key else int(h * config.FOOTER_FRAC)
+            hit = search_band(col, y0, y1, f"{n}.", str(n))
+            if hit:
+                by, bh = hit
+                blob = detect.Blob(by, by + max(bh, 40), 0, None,
+                                   text_value=n, is_question=True)
+                placed.append(Placed(key[0], key[1], col.x_offset_px,
+                                     col.arr.shape[1], blob))
+                warnings.append(f"q{n}: recovered by rescue OCR on page {key[0] + 1}")
+                rescued += 1
+                break
+    return rescued
+
+
 def crop_paper(doc, placed: list[Placed], out_dir, warnings):
     """Pass 2: crop every numbered blob's region and extract its text."""
     by_page: dict[int, list[Placed]] = {}
@@ -185,10 +274,20 @@ def process_paper(pdf_path, out_root, debug=False):
         placed = [p for p in placed if p.side == "right"]
     placed = prefilter_marks(placed, warnings)
 
-    placed.sort(key=lambda p: (p.pno, p.band, p.side == "right", p.blob.y0))
-    ordered_blobs = [p.blob for p in placed]
-    kept = set(map(id, numbering.resolve(ordered_blobs, warnings)))
-    placed = [p for p in placed if id(p.blob) in kept and p.blob.number]
+    all_placed = sorted(placed, key=lambda p: (p.pno, p.band, p.side == "right", p.blob.y0))
+
+    def run_resolve(pl):
+        for p in pl:
+            p.blob.number = None
+        kept = set(map(id, numbering.resolve([p.blob for p in pl], warnings)))
+        return [p for p in pl if id(p.blob) in kept and p.blob.number]
+
+    placed = run_resolve(all_placed)
+    if rescue_missing(doc, placed, warnings):
+        known = set(map(id, all_placed))
+        all_placed = sorted(all_placed + [p for p in placed if id(p) not in known],
+                            key=lambda p: (p.pno, p.band, p.side == "right", p.blob.y0))
+        placed = run_resolve(all_placed)
 
     questions = crop_paper(doc, placed, out_dir, warnings)
     doc.close()
