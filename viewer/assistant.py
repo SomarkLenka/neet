@@ -73,11 +73,10 @@ def resolve_claude(cfg: dict) -> list[str]:
     return [exe]
 
 
-def build_command(cfg: dict, session_id: str | None) -> list[str]:
-    cmd = resolve_claude(cfg) + [
-        "-p", "--output-format", "stream-json",
-        "--include-partial-messages", "--verbose",
-    ]
+def build_command(cfg: dict, session_id: str | None, *, stream: bool = True) -> list[str]:
+    cmd = resolve_claude(cfg) + ["-p", "--output-format", "stream-json", "--verbose"]
+    if stream:
+        cmd += ["--include-partial-messages"]
     if cfg.get("model"):
         cmd += ["--model", cfg["model"]]
     if cfg.get("allowed_tools"):
@@ -90,6 +89,79 @@ def build_command(cfg: dict, session_id: str | None) -> list[str]:
         cmd += ["--resume", session_id]
     cmd += cfg.get("extra_args") or []
     return cmd
+
+
+def collect(prompt: str, *, kind: str = "direct", cfg: dict | None = None,
+            timeout: int | None = None) -> dict:
+    """One-shot, non-streaming claude run for the baker. Returns
+    {"text", "sources", "cost_usd", "session_id", "error"}.
+
+    `kind == "rag"` keeps the configured MCP/tools so the model can retrieve
+    reference material; with no mcp_config set it simply answers without it
+    (the caller marks such answers as stubs). Never raises — failures come
+    back in "error" so a batch bake never dies on one bad question."""
+    if cfg is None:
+        try:
+            cfg = load_config()
+        except AssistantError as e:
+            return {"text": "", "sources": [], "cost_usd": None,
+                    "session_id": None, "error": str(e)}
+    try:
+        cmd = build_command(cfg, None, stream=False)
+    except AssistantError as e:
+        return {"text": "", "sources": [], "cost_usd": None, "session_id": None, "error": str(e)}
+
+    t0 = time.monotonic()
+    debug_log("collect_start", kind=kind, cmd=cmd, prompt=prompt)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(PROJECT_ROOT), input=prompt,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", errors="replace",
+            timeout=timeout or (cfg.get("timeout_seconds") or 300) + 30,
+        )
+    except subprocess.TimeoutExpired:
+        debug_log("collect_timeout", kind=kind)
+        return {"text": "", "sources": [], "cost_usd": None, "session_id": None,
+                "error": "claude timed out"}
+    except OSError as e:
+        return {"text": "", "sources": [], "cost_usd": None, "session_id": None,
+                "error": f"could not start claude: {e}"}
+
+    final_text, session_id, cost, result_err = "", None, None, None
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = msg.get("type")
+        if t == "system" and msg.get("subtype") == "init":
+            session_id = msg.get("session_id") or session_id
+        elif t == "assistant":
+            blocks = ((msg.get("message") or {}).get("content")) or []
+            texts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+            if texts:
+                final_text = "\n".join(texts)
+        elif t == "result":
+            session_id = msg.get("session_id") or session_id
+            cost = msg.get("total_cost_usd")
+            if msg.get("is_error"):
+                result_err = msg.get("result") or "claude reported an error"
+            elif not final_text:
+                final_text = msg.get("result", "")
+
+    err = result_err
+    if proc.returncode != 0 and not final_text:
+        tail = "\n".join(proc.stderr.splitlines()[-10:]).strip()
+        err = err or tail or f"claude exited with code {proc.returncode}"
+    debug_log("collect_end", kind=kind, exit_code=proc.returncode,
+              duration_s=round(time.monotonic() - t0, 1), cost_usd=cost,
+              text_chars=len(final_text), error=err)
+    return {"text": final_text, "sources": [], "cost_usd": cost,
+            "session_id": session_id, "error": err if not final_text else None}
 
 
 def first_turn_prompt(meta: dict, user_message: str) -> str:
