@@ -154,7 +154,35 @@ async function loadChat() {
   const lastNode = [...chat.messages].reverse().find((m) => m.node_id)?.node_id;
   const next = lastNode ? followupsOf(lastNode) : [];
   renderBubbles(next.length ? next : state.bubbles, { showBack: next.length > 0 });
+
+  // a generation started elsewhere is still running for this question: show a
+  // pending state and poll until it lands, then re-render with the answer.
+  if (chat.generating) {
+    const p = document.createElement("div");
+    p.className = "msg assistant pending";
+    p.textContent = chat.generating.kind === "rag"
+      ? "Searching the textbooks..." : "Finding the answer...";
+    box.appendChild(p);
+    waitForGeneration({ paper: state.current.paper, number: state.current.number });
+  }
   box.scrollTop = box.scrollHeight;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitForGeneration(origin) {
+  while (isCurrent(origin)) {
+    await sleep(3000);
+    if (!isCurrent(origin)) return;
+    let chat;
+    try {
+      chat = await (await fetch(`/api/chat/${origin.paper}/${origin.number}`)).json();
+    } catch (_) { return; }
+    if (!chat.generating) {
+      if (isCurrent(origin)) loadChat();   // re-render now that the answer is saved
+      return;
+    }
+  }
 }
 
 // ---------- support bubbles ----------------------------------------------
