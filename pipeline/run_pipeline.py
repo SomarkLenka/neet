@@ -119,10 +119,15 @@ def rescue_missing(doc, placed: list[Placed], warnings) -> int:
 
     page_cache: dict[int, object] = {}
 
+    breaks_cache: dict[int, list[int]] = {}
+
     def column(pno, side):
         if pno not in page_cache:
             page = doc[pno]
-            page_cache[pno] = pdf_pages.split_columns(pno, page, pdf_pages.render_gray(page))
+            gray = pdf_pages.render_gray(page)
+            pr = pdf_pages.split_columns(pno, page, gray)
+            page_cache[pno] = pr
+            breaks_cache[pno] = pdf_pages.find_section_breaks(gray, pr.divider_px)
         return next(c for c in page_cache[pno].columns if c.side == side)
 
     def anchor(n, step):
@@ -178,8 +183,9 @@ def rescue_missing(doc, placed: list[Placed], warnings) -> int:
                 by, bh = hit
                 blob = detect.Blob(by, by + max(bh, 40), 0, None,
                                    text_value=n, is_question=True)
+                band = sum(1 for y in breaks_cache.get(key[0], []) if by > y)
                 placed.append(Placed(key[0], key[1], col.x_offset_px,
-                                     col.arr.shape[1], blob))
+                                     col.arr.shape[1], blob, band=band))
                 warnings.append(f"q{n}: recovered by rescue OCR on page {key[0] + 1}")
                 rescued += 1
                 break

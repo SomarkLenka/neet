@@ -53,9 +53,15 @@ def is_content_page(page: fitz.Page, gray: np.ndarray) -> tuple[bool, str]:
 
 
 def find_section_breaks(gray: np.ndarray, divider: int) -> list[int]:
-    """y positions where content crosses the column divider — centered section
-    headers (PHYSICS / CHEMISTRY / BOTANY...) that split a page into bands.
-    Reading order restarts left->right below each such band."""
+    """y positions of mid-page subject headers (PHYSICS / CHEMISTRY / BOTANY /
+    ZOOLOGY) that split a page into reading bands: a centered header makes the
+    columns restart left->right below it.
+
+    Restricted to the page's middle band (15%-85%): the masthead/logo rules at
+    the top and the page-number rule at the bottom also cross the divider but
+    are page furniture, not section transitions. Clusters of nearby crossings
+    (a header's text rows plus its box border) collapse to one break.
+    """
     h, w = gray.shape
     x0, x1 = max(0, divider - 150), min(w, divider + 150)
     # strict darkness + width: section headers are broad solid-black bands at
@@ -63,14 +69,20 @@ def find_section_breaks(gray: np.ndarray, divider: int) -> list[int]:
     window = gray[:, x0:x1] < 100
     width = window.sum(axis=1)
     crossing = width > 120
-    breaks, start = [], None
-    for y in range(int(h * 0.05), int(h * 0.95)):
+    raw, start = [], None
+    for y in range(int(h * 0.15), int(h * 0.85)):
         if crossing[y] and start is None:
             start = y
         elif not crossing[y] and start is not None:
             if 10 <= y - start <= 250:
-                breaks.append((start + y) // 2)
+                raw.append((start + y) // 2)
             start = None
+    # collapse crossings within ~400px (one header spans several text rows)
+    breaks: list[int] = []
+    for y in raw:
+        if breaks and y - breaks[-1] <= 400:
+            continue
+        breaks.append(y)
     return breaks
 
 
